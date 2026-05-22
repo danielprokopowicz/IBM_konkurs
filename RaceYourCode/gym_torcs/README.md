@@ -14,9 +14,9 @@ AI racing driver for TORCS Corkscrew track using Behavioral Cloning.
 - Training: 500 epochs, Adam optimizer, MSE loss = 0.0013
 
 ## Usage
-python train.py collect   # Phase 1: collect training data
-python train.py bc        # Phase 2: Behavioral Cloning
-python train.py play      # Run trained AI driver
+- python train.py collect   # Phase 1: collect training data
+- python train.py bc        # Phase 2: Behavioral Cloning
+- python train.py play      # Run trained AI driver
 
 ## Results
 Lap time: ~1:42 from standing start on Corkscrew track
