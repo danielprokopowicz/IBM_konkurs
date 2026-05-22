@@ -526,60 +526,141 @@ def destringify(s):
         else:
             return [destringify(i) for i in s]
 
-def drive_example(c):
-    '''This is only an example. It will get around the track but the
-    correct thing to do is write your own `drive()` function.'''
-    S,R= c.S.d,c.R.d
-    target_speed=160
+# ============================================================
+#  CORKSCREW DRIVER — Rule-based with predictive braking
+# ============================================================
+#  Track sensors [0..18] measure distance to track edge
+#  in 19 directions from -45 to +45 degrees.
+#  Index 9 = straight ahead, <9 = left, >9 = right
+#
+#  Key idea: if front sensors are short = corner ahead = brake.
+# ============================================================
 
-    # Steer To Corner
-    R['steer']= S['angle']*25 / PI
-    # Steer To Center
-    R['steer']-= S['trackPos']*.25
+# --- TUNABLE PARAMETERS ---
+MAX_SPEED        = 250
+MIN_CORNER_SPEED = 40
+STEER_LOCK       = 0.366
+STEER_ANGLE_GAIN = 0.8
+STEER_POS_GAIN   = 0.30
+GEAR_UP_RPM      = 7500
+GEAR_DOWN_RPM    = 3000
 
-    # Throttle Control
-    R['accel'] = max(0.0, min(1.0, R['accel']))
-    
-#if abs(S['angle']) > 0.35:
- #   R['brake'] = 0.3
-  #  R['accel'] = 0.0
-#else:
- #   R['brake'] = 0.0
-  #  R['accel'] = 1.0  # Full throttle on straights
 
-    if S['speedX'] < target_speed - (R['steer']*2.5):
-        R['accel']+= .4
+def get_target_speed(track):
+    front = [track[i] for i in range(7, 12)]
+    front_min = min(front)
+    wide_front = [track[i] for i in range(5, 14)]
+    wide_min = min(wide_front)
+    look_ahead = min(front_min, wide_min)
+
+    if look_ahead > 180:   return 300
+    elif look_ahead > 150: return 270
+    elif look_ahead > 120: return 240
+    elif look_ahead > 100: return 210
+    elif look_ahead > 80:  return 180
+    elif look_ahead > 60:  return 150
+    elif look_ahead > 55:  return 140
+    elif look_ahead > 50:  return 130
+    elif look_ahead > 45:  return 125
+    elif look_ahead > 40:  return 115
+    elif look_ahead > 35:  return 105
+    elif look_ahead > 25:  return 85
+    elif look_ahead > 18:  return 70
+    elif look_ahead > 12:  return 60
+    else:                  return 50
+
+
+def drive(c):
+    S, R = c.S.d, c.R.d
+
+    speed_x    = S['speedX']
+    speed_y    = S['speedY']
+    angle      = S['angle']
+    track_pos  = S['trackPos']
+    track      = S['track']
+    rpm        = S['rpm']
+    gear       = S['gear']
+    wheel_spin = S['wheelSpinVel']
+
+    target_speed = get_target_speed(track)
+
+    # ====== STEERING ======
+    steer = angle * STEER_ANGLE_GAIN / STEER_LOCK
+    steer -= track_pos * STEER_POS_GAIN
+    R['steer'] = max(-1.0, min(1.0, steer))
+
+    # ====== THROTTLE / BRAKE ======
+    speed_diff = target_speed - speed_x
+
+    if speed_x < target_speed:
+        if speed_diff > 50:    R['accel'] = 1.0
+        elif speed_diff > 20:  R['accel'] = 0.6
+        else:                  R['accel'] = 0.3
+        R['brake'] = 0.0
     else:
-        R['accel']-= .2
-    if S['speedX']<10:
-       R['accel']+= 1/(S['speedX']+.1)
+        overspeed = speed_x - target_speed
+        if overspeed > 60:
+            R['brake'] = 0.8; R['accel'] = 0.0
+        elif overspeed > 30:
+            R['brake'] = 0.6; R['accel'] = 0.0
+        else:
+            R['brake'] = 0.15
 
-    # Traction Control System
-    if ((S['wheelSpinVel'][2]+S['wheelSpinVel'][3]) -
-       (S['wheelSpinVel'][0]+S['wheelSpinVel'][1]) > 2):
-       R['accel']-= 0.1
+    # Standing start
+    if speed_x < 10:
+        R['accel'] = max(R['accel'], 0.8)
+        R['brake'] = 0.0
 
+    # Emergency brake on large angle
+    if abs(angle) > 0.6:
+        R['brake'] = max(R['brake'], 0.5)
+        R['accel'] = 0.0
 
+    # Lateral slide control
+    if abs(speed_y) > 20:
+        R['brake'] = max(R['brake'], 0.3)
+        R['accel'] = min(R['accel'], 0.2)
 
-    # Automatic Transmission
-    R['gear']=1
-    if S['speedX']>60:
-        R['gear']=2
-    if S['speedX']>100:
-        R['gear']=3
-    if S['speedX']>140:
-        R['gear']=4
-    if S['speedX']>190:
-        R['gear']=5
-    if S['speedX']>220:
-        R['gear']=6
+    # ====== ABS ======
+    if speed_x > 10:
+        slip = sum(abs(wheel_spin[i] * 0.3 - speed_x) for i in range(4))
+        if slip / 4 > speed_x * 0.5:
+            R['brake'] = R['brake'] * 0.7
+
+    # ====== TRACTION CONTROL ======
+    rear_spin = wheel_spin[2] + wheel_spin[3]
+    front_spin = wheel_spin[0] + wheel_spin[1]
+    if rear_spin - front_spin > 5:
+        R['accel'] = max(0.0, R['accel'] - 0.2)
+
+    # ====== GEARS ======
+    gear = 1
+    if speed_x > 50:  gear = 2
+    if speed_x > 80:  gear = 3
+    if speed_x > 110: gear = 4
+    if speed_x > 140: gear = 5
+    if speed_x > 170: gear = 6
+    R['gear'] = gear
+
+    # ====== RECOVERY ======
+    if abs(track_pos) > 0.95:
+        R['steer'] = -track_pos * 0.5
+        R['accel'] = 0.1
+        R['brake'] = 0.3
+
+    if abs(track_pos) > 1.0:
+        R['steer'] = -track_pos * 0.8
+        R['accel'] = 0.05
+        R['brake'] = 0.5
+        R['gear'] = 1
+
     return
 
-# ================ MAIN ================
+
 if __name__ == "__main__":
-    C= Client(p=3001)
-    for step in range(C.maxSteps,0,-1):
+    C = Client(p=3001)
+    for step in range(C.maxSteps, 0, -1):
         C.get_servers_input()
-        drive_example(C)
+        drive(C)
         C.respond_to_server()
     C.shutdown()

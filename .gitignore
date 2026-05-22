@@ -1,0 +1,7 @@
+﻿driving_data.json
+__pycache__/
+*.pyc
+Good_JSON/
+vtorcs-RL-color/
+.idea/
+check_data.py

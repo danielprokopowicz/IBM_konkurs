@@ -150,7 +150,7 @@ class Client():
         # == Initialize Connection To Server ==
         self.so.settimeout(1)
 
-        n_fail = 1000
+        n_fail = 5
         while True:
             # This string establishes track sensor angles! You can customize them.
             #a= "-90 -75 -60 -45 -30 -20 -15 -10 -5 0 5 10 15 20 30 45 60 75 90"
@@ -181,7 +181,7 @@ class Client():
 
                     time.sleep(1.0)
                     os.system('sh autostart.sh')
-                    n_fail = 1000
+                    n_fail = 5
                 n_fail -= 1
 
             identify = '***identified***'
